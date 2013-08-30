@@ -1,0 +1,54 @@
+#!/bin/bash
+pluginpath="$(dirname "$(readlink -f $0)")"
+
+cd "$pluginpath"
+
+OLD_HEAD=$(git show-ref HEAD | cut -d' ' -f1)
+git config --bool pull.rebase true
+git pull
+HEAD=$(git show-ref HEAD | cut -d' ' -f1)
+if [ "$HEAD" != "$OLD_HEAD" ]; then
+  exec $0 $@
+fi
+
+cd ..
+[ -f "autostart" ] && { [ -L "autostart" ] || mv "autostart" "autostart.local" ;}
+ln -svf "config/autostart"
+
+for plugin in *; do
+  [ -d "$plugin" ] || continue
+
+  [ "$plugin" = "config" ] && continue
+  cut -d' ' -f1 "$pluginpath/rc" | fgrep -q "$plugin" || {
+    echo "removing $plugin"
+    rm -rf "$plugin"
+  }
+done
+
+cat "$pluginpath/rc" | while read line; do
+  name="$(echo "$line" | cut -d' ' -f1)"
+  url="$(echo "$line" | cut -f' ' -f2)"
+  [ -d "$name" ] && (set -e
+    cd "$name"
+    echo -n "$name: "
+    git config --bool pull.rebase true
+    git stash save "configsauce autostash"
+    git pull --rebase
+    git stash pop
+  ) || (
+    git clone $url "$name"
+    cd "$name"
+    git config --bool pull.rebase true
+  )
+done
+
+for plugin in *; do
+  [ -d "$plugin" ] || continue
+
+  [ "$plugin" = "config" ] && continue
+  (
+    cd "$plugin"
+    git submodule update --init --recursive
+  )
+  [ -x "$plugin/configinstall" ] && "$plugin/configinstall"
+done
